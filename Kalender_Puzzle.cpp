@@ -4,6 +4,8 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <set>
+#include <unordered_set>
 
 /*********************************************************************************************************************/
 
@@ -13,6 +15,7 @@ constexpr size_t nMaxCols{8}; // add one "protection" bit which may never be set
 // we store always full 8 bits per row, so some bits do not represent actual positions on the board
 constexpr size_t nBits = nRows*nMaxCols;
 
+constexpr size_t nPieces{9};
 
 /*********************************************************************************************************************/
 
@@ -61,6 +64,10 @@ struct Piece {
             }
         }
         throw; // cannot happen
+    }
+
+    bool operator==(const Piece& other) const {
+        return other.mask == mask && other.id == id;
     }
 
 };
@@ -393,15 +400,28 @@ std::array<Piece, 39> pieces{{
 
 /*********************************************************************************************************************/
 
-void visualize(Piece piece) {
+void visualize(std::list<Piece> pieces) {
     size_t position = 0;
     for(size_t row=0; row<nRows; ++row) {
         for(size_t col=0; col<nMaxCols; ++col) {
-            if(piece.mask.test(positionToBit(position))) {
-                std::cout << piece.id;
+            int id=0;
+            for(const auto &p : pieces) {
+                if(!p.mask.test(positionToBit(position))) continue;
+                if(id == 0) {
+                    id = p.id;
+                }
+                else {
+                    id = -1;
+                }
+            }
+            if(id == 0) {
+                std::cout << " ";
+            }
+            else if(id == -1) {
+                std::cout << "!";
             }
             else {
-                std::cout << " ";
+                std::cout << id;
             }
             ++position;
         }
@@ -414,11 +434,77 @@ void visualize(Piece piece) {
 // Map Index: first used position of the piece
 std::map<size_t, std::list<Piece>> piece_positions;
 
+size_t nSolutionsFound{0};
 
 /*********************************************************************************************************************/
+/*********************************************************************************************************************/
 
-int main() {
+void recursiveSolver(std::bitset<nBits> board, size_t nextPosition, std::bitset<nPieces> usedPieceIds,
+                    std::list<Piece> usedPieces) {
 
+    //
+    if(board.all()){
+        // solution found!
+        std::cout << "Solution " << ++nSolutionsFound << std::endl;
+        visualize(usedPieces);
+    }
+
+    // find next free position
+    while(board.test(positionToBit(nextPosition)) || piece_positions.find(nextPosition) == piece_positions.end()) {
+        ++nextPosition;
+        if(positionToBit(nextPosition) >= nBits) {
+            // no solution possible...
+            return;
+        }
+    }
+
+    // check all pieces on that position
+    for(auto p : piece_positions.at(nextPosition)) {
+        if(usedPieceIds.test(p.id-1)) {
+            // piece is already used
+            continue;
+        }
+        if((board & p.mask).any()) {
+            // piece collides with something already on the board
+            continue;
+        }
+        auto boardWithP = board | p.mask;
+        auto usedPieceIdsWithP = usedPieceIds;
+        usedPieceIdsWithP.set(p.id - 1);
+        auto usedPiecesWithP = usedPieces;
+        usedPiecesWithP.push_back(p);
+        recursiveSolver(boardWithP, nextPosition+1, usedPieceIdsWithP, usedPiecesWithP);
+    }
+
+
+}
+
+
+/*********************************************************************************************************************/
+/*********************************************************************************************************************/
+
+int main(int argc, char** argv) {
+    // parse command line
+    if(argc != 3) {
+        std::cout << "Usage: Kalender_Puzzle <day> <month>" << std::endl;
+        std::cout << "With day: 1-31 and month: 1-12" << std::endl;
+        return 1;
+    }
+
+    size_t month = std::atoi(argv[2]);
+    size_t day = std::atoi(argv[1]);
+
+    if(day < 1 || day > 31) {
+        std::cout << "Day " << day << " out of range!" << std::endl;
+        return 1;
+    }
+    if(month < 1 || month > 12) {
+        std::cout << "Month` " << month << " out of range!" << std::endl;
+        return 1;
+    }
+
+
+    // fill piece_positions
     for(size_t idx = 0; idx < pieces.size(); ++idx ) {
         const Piece& piece = pieces[idx]; 
         size_t maxRowShift = nRows - piece.getHeight();
@@ -430,14 +516,22 @@ int main() {
                 Piece pieceShifted = piece;
                 pieceShifted.mask = piece.mask >> bitShift;
                 if((pieceShifted.mask & boundingBox).any()) continue; // violates bounding box
-                visualize(pieceShifted);
-                std::cout << "--- " << std::endl;
                 piece_positions[pieceShifted.getFirstPosition()].push_back(pieceShifted);
             }
         }
     }
 
 
+    // Reserve date positions on board 
+    auto board = boundingBox;
 
+    size_t monthBit = nBits - month - (month > 6 ? nMaxCols-6 : 0);
+    board.set(monthBit);
 
+    size_t dayBit = nBits-1 - 2*nMaxCols - ((day-1)/7)*nMaxCols - (day-1)%7;
+    board.set(dayBit);
+
+    // start recursive solver
+    recursiveSolver(board, 0, {}, {});
+    return 0;
 }
